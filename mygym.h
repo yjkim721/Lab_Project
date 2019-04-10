@@ -60,10 +60,14 @@ public:
   bool ExecuteActions(Ptr<OpenGymDataContainer> action);
 
   int test = 2;
+  static int enqueue;
+  // the function has to be static to work with MakeBoundCallback
+  // that is why we pass pointer to MyGymEnv instance to be able to store the context (node, etc)
+  static void PerformCca(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
+  void PerformTest();
 
 private:
   void ScheduleNextStateRead();
-
   Time m_interval;
 };
 

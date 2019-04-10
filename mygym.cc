@@ -41,11 +41,12 @@ NS_LOG_COMPONENT_DEFINE ("MyGymEnv");
 
 NS_OBJECT_ENSURE_REGISTERED (MyGymEnv);
 
+int MyGymEnv::enqueue = 0;
+
 MyGymEnv::MyGymEnv ()
 {
   NS_LOG_FUNCTION (this);
   m_interval = Seconds(0.1);
-
   Simulator::Schedule (Seconds(0.0), &MyGymEnv::ScheduleNextStateRead, this);
 }
 
@@ -230,6 +231,19 @@ MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
   NS_LOG_UNCOND ("---" << box);
   NS_LOG_UNCOND ("---" << discrete);
   return true;
+}
+
+void
+MyGymEnv::PerformCca (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
+{
+  enqueue += 1;
+  if(enqueue % 20 == 0)
+    NS_LOG_UNCOND ("Enqueue: OCCUR " << enqueue);
+}
+
+void
+MyGymEnv::PerformTest(){
+  NS_LOG_UNCOND ("teset!!!!");
 }
 
 } // ns3 namespace
