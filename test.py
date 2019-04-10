@@ -3,8 +3,6 @@
 
 import argparse
 from ns3gym import ns3env
-from tcp_base import TcpTimeBased
-from tcp_newreno import TcpNewReno
 
 __author__ = "Piotr Gawlowicz"
 __copyright__ = "Copyright (c) 2018, Technische Universität Berlin"
@@ -19,20 +17,24 @@ parser.add_argument('--start',
                     help='Start ns-3 simulation script 0/1, Default: 1')
 parser.add_argument('--iterations',
                     type=int,
-                    default=1,
+                    default=2,
                     help='Number of iterations, Default: 1')
 args = parser.parse_args()
 startSim = bool(args.start)
 iterationNum = int(args.iterations)
 
 port = 5555
-simTime = 10 # seconds
+simTime = 5 # seconds
 stepTime = 0.5  # seconds
-seed = 12
-simArgs = {"--duration": simTime,}
+seed = 0
+simArgs = {"--simTime": simTime,
+           "--stepTime": stepTime,
+           "--testArg": 123}
 debug = False
+probability = 0;
 
 env = ns3env.Ns3Env(port=port, stepTime=stepTime, startSim=startSim, simSeed=seed, simArgs=simArgs, debug=debug)
+
 # simpler:
 #env = ns3env.Ns3Env()
 env.reset()
@@ -45,51 +47,21 @@ print("Action space: ", ac_space, ac_space.dtype)
 stepIdx = 0
 currIt = 0
 
-def get_agent(obs):
-    socketUuid = obs[0]
-    tcpEnvType = obs[1]
-    tcpAgent = get_agent.tcpAgents.get(socketUuid, None)
-    if tcpAgent is None:
-        if tcpEnvType == 0:
-            # event-based = 0
-            tcpAgent = TcpNewReno()
-        else:
-            # time-based = 1
-            tcpAgent = TcpTimeBased()
-        tcpAgent.set_spaces(get_agent.ob_space, get_agent.ac_space)
-        get_agent.tcpAgents[socketUuid] = tcpAgent
-
-    return tcpAgent
-
-# initialize variable
-get_agent.tcpAgents = {}
-get_agent.ob_space = ob_space
-get_agent.ac_space = ac_space
-
 try:
     while True:
         print("Start iteration: ", currIt)
         obs = env.reset()
-        reward = 0
-        done = False
-        info = None
         print("Step: ", stepIdx)
         print("---obs: ", obs)
 
-        # get existing agent of create new TCP agent if needed
-        tcpAgent = get_agent(obs)
-
         while True:
             stepIdx += 1
-            action = tcpAgent.get_action(obs, reward, done, info)
+            action = env.action_space.sample()
             print("---action: ", action)
 
             print("Step: ", stepIdx)
             obs, reward, done, info = env.step(action)
             print("---obs, reward, done, info: ", obs, reward, done, info)
-
-            # get existing agent of create new TCP agent if needed
-            tcpAgent = get_agent(obs)
 
             if done:
                 stepIdx = 0
