@@ -192,6 +192,7 @@ main (int argc, char *argv[])
   size_t size = queueDiscs.Get (0) -> GetNInternalQueues();
   NS_LOG_UNCOND("InternalQueue size: " << size);
   Ptr<QueueDisc> queue = queueDiscs.Get (0);
+  myGymEnv->queue = queue;
   //myGymEnv->PerformTest();
   queue -> TraceConnectWithoutContext("Enqueue", MakeBoundCallback (&MyGymEnv::PerformCca, myGymEnv, duration));
 

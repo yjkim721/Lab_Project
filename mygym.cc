@@ -227,6 +227,8 @@ MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
   Config::SetDefault ("ns3::RedQueueDisc::MaxTh", DoubleValue (20));
   RngSeedManager::SetSeed (this->test);
   this->test += 1;
+
+  StaticCast<RedQueueDisc> (queue)->SetTh (1, 5);
   NS_LOG_UNCOND ("MyExecuteActions: " << action);
   NS_LOG_UNCOND ("---" << box);
   NS_LOG_UNCOND ("---" << discrete);
