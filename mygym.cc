@@ -34,6 +34,8 @@
 
 #include <sstream>
 #include <iostream>
+#include <cmath>
+#include <algorithm>
 
 namespace ns3 {
 
@@ -41,7 +43,17 @@ NS_LOG_COMPONENT_DEFINE ("MyGymEnv");
 
 NS_OBJECT_ENSURE_REGISTERED (MyGymEnv);
 
-int MyGymEnv::enqueue = 0;
+int MyGymEnv::queue_size = 0;
+int MyGymEnv::m_count = 0;
+double MyGymEnv::avgPacketDelay = 0;
+double MyGymEnv::lastPacketDelay = 9999;
+double MyGymEnv::totalPacketDelay = 0;
+double MyGymEnv::dropRate = 0;
+int MyGymEnv::dropPackets = 0;
+int MyGymEnv::dequeuePackets = 0;
+int MyGymEnv::receivedPackets = 0;
+int MyGymEnv::packetNum = 0;
+int MyGymEnv::totalPacketNum = 0;
 
 MyGymEnv::MyGymEnv ()
 {
@@ -94,20 +106,10 @@ Define observation space
 Ptr<OpenGymSpace>
 MyGymEnv::GetObservationSpace()
 {
-  uint32_t nodeNum = 5;
-  float low = 0.0;
-  float high = 10.0;
   std::vector<uint32_t> shape = {nodeNum,};
-  std::string dtype = TypeNameGet<uint32_t> ();
-
-  Ptr<OpenGymDiscreteSpace> discrete = CreateObject<OpenGymDiscreteSpace> (nodeNum);
-  Ptr<OpenGymBoxSpace> box = CreateObject<OpenGymBoxSpace> (low, high, shape, dtype);
-
-  Ptr<OpenGymDictSpace> space = CreateObject<OpenGymDictSpace> ();
-  space->Add("box", box);
-  space->Add("discrete", discrete);
-
-  NS_LOG_UNCOND ("MyGetObservationSpace: " << space);
+  std::string dtype = TypeNameGet<float> ();
+  Ptr<OpenGymBoxSpace> space = CreateObject<OpenGymBoxSpace> (low, high, shape, dtype);
+  NS_LOG_UNCOND ("GetObservationSpace: " << space);
   return space;
 }
 
@@ -117,20 +119,11 @@ Define action space
 Ptr<OpenGymSpace>
 MyGymEnv::GetActionSpace()
 {
-  uint32_t nodeNum = 5;
-  float low = 0.0;
-  float high = 10.0;
-  std::vector<uint32_t> shape = {nodeNum,};
-  std::string dtype = TypeNameGet<uint32_t> ();
-
-  Ptr<OpenGymDiscreteSpace> discrete = CreateObject<OpenGymDiscreteSpace> (nodeNum);
-  Ptr<OpenGymBoxSpace> box = CreateObject<OpenGymBoxSpace> (low, high, shape, dtype);
-
-  Ptr<OpenGymDictSpace> space = CreateObject<OpenGymDictSpace> ();
-  space->Add("box", box);
-  space->Add("discrete", discrete);
-
-  NS_LOG_UNCOND ("MyGetActionSpace: " << space);
+  NS_LOG_FUNCTION (this);
+  std::vector<uint32_t> shape = {actionNum,};
+  std::string dtype = TypeNameGet<float> ();
+  Ptr<OpenGymBoxSpace> space = CreateObject<OpenGymBoxSpace> (low, high, shape, dtype);
+  NS_LOG_UNCOND ("GetActionSpace: " << space);
   return space;
 }
 
@@ -157,38 +150,20 @@ Collect observations
 Ptr<OpenGymDataContainer>
 MyGymEnv::GetObservation()
 {
-  uint32_t nodeNum = 5;
-  uint32_t low = 0.0;
-  uint32_t high = 10.0;
-  Ptr<UniformRandomVariable> rngInt = CreateObject<UniformRandomVariable> ();
-
+  NS_LOG_FUNCTION (this);
   std::vector<uint32_t> shape = {nodeNum,};
-  Ptr<OpenGymBoxContainer<uint32_t> > box = CreateObject<OpenGymBoxContainer<uint32_t> >(shape);
+  Ptr<OpenGymBoxContainer<float> > box = CreateObject<OpenGymBoxContainer<float> >(shape);
 
-  // generate random data
-  for (uint32_t i = 0; i<nodeNum; i++){
-    uint32_t value = rngInt->GetInteger(low, high);
-    box->AddValue(value);
-  }
+  box->AddValue(queueMaxSize);
+  box->AddValue(queue_size);
+  box->AddValue(m_count);
+  box->AddValue(minTh);
+  box->AddValue(maxTh);
+  box->AddValue(bottleNeckLinkBw);
+  box->AddValue(bottleNeckLinkDelay);
 
-  Ptr<OpenGymDiscreteContainer> discrete = CreateObject<OpenGymDiscreteContainer>(nodeNum);
-  uint32_t value = rngInt->GetInteger(low, high);
-  discrete->SetValue(value);
-
-  Ptr<OpenGymTupleContainer> data = CreateObject<OpenGymTupleContainer> ();
-  data->Add(box);
-  data->Add(discrete);
-
-  // Print data from tuple
-  Ptr<OpenGymBoxContainer<uint32_t> > mbox = DynamicCast<OpenGymBoxContainer<uint32_t> >(data->Get(0));
-  Ptr<OpenGymDiscreteContainer> mdiscrete = DynamicCast<OpenGymDiscreteContainer>(data->Get(1));
-  // NS_LOG_UNCOND ("YJ(m_isGentle): " << RedQueueDisc::m_isGentle);
-  NS_LOG_UNCOND ("YJ(GetSeed): " << RngSeedManager::GetSeed ());
-  NS_LOG_UNCOND ("MyGetObservation: " << data);
-  NS_LOG_UNCOND ("---" << mbox);
-  NS_LOG_UNCOND ("---" << mdiscrete);
-
-  return data;
+  NS_LOG_UNCOND ("MyGetObservation: " << box);
+  return box;
 }
 
 /*
@@ -198,7 +173,27 @@ float
 MyGymEnv::GetReward()
 {
   static float reward = 0.0;
-  reward += 1;
+  avgPacketDelay = std::isnan(avgPacketDelay / packetNum) ? 0 : avgPacketDelay / packetNum;
+  dropRate = std::isnan((double)dropPackets/(packetNum + dropPackets)) ? 0 : (double)dropPackets/(packetNum + dropPackets);
+  receivedPackets = packetNum + dropPackets;
+  if(this-> minTh > this->maxTh){
+    reward = -2;
+  }else{
+      if (this->minTh < avgPacketDelay && avgPacketDelay < this->maxTh) {
+        reward = std::max(avgPacketDelay-lastPacketDelay, 0.0);
+      }
+      else if (avgPacketDelay >= this->maxTh){
+        reward = -1;
+      }
+      else {
+        reward = 0;
+      }
+  }
+  lastPacketDelay = avgPacketDelay;
+  avgPacketDelay = 0;
+  packetNum = 0;
+  dropPackets = 0;
+  NS_LOG_UNCOND ("MyGetReward: " << reward);
   return reward;
 }
 
@@ -208,9 +203,12 @@ Define extra info. Optional
 std::string
 MyGymEnv::GetExtraInfo()
 {
-  std::string myInfo = "testInfo";
-  myInfo += "|123";
-  NS_LOG_UNCOND("MyGetExtraInfo: " << myInfo);
+  std::string myInfo = std::to_string(totalPacketDelay/totalPacketNum);
+  myInfo += "," + std::to_string(lastPacketDelay);
+  myInfo += "," + std::to_string(dropRate);
+  myInfo += "," + std::to_string(dequeuePackets);
+  myInfo += "," + std::to_string(receivedPackets);
+  NS_LOG_UNCOND("MyGetExtraInfo(totalPacketDelay): " << myInfo);
   return myInfo;
 }
 
@@ -220,32 +218,65 @@ Execute received actions
 bool
 MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 {
-  Ptr<OpenGymDictContainer> dict = DynamicCast<OpenGymDictContainer>(action);
-  Ptr<OpenGymBoxContainer<uint32_t> > box = DynamicCast<OpenGymBoxContainer<uint32_t> >(dict->Get("box"));
-  Ptr<OpenGymDiscreteContainer> discrete = DynamicCast<OpenGymDiscreteContainer>(dict->Get("discrete"));
+  Ptr<OpenGymBoxContainer<float> > box = DynamicCast<OpenGymBoxContainer<float> >(action);
+  float alpha = box -> GetValue(0);
+  float beta = box -> GetValue(1);
+  int new_minTh = queueMaxSize * alpha;
+  int new_maxTh = queueMaxSize * beta;
+  this->minTh = new_minTh;
+  this->maxTh = new_maxTh;
+  NS_LOG_UNCOND("myGymEnv(ExecuteActions): " << new_minTh << "," << new_maxTh);
+  //Config::SetDefault ("ns3::RedQueueDisc::MinTh", DoubleValue (new_minTh));
+  //Config::SetDefault ("ns3::RedQueueDisc::MaxTh", DoubleValue (new_maxTh));
+  //StaticCast<RedQueueDisc> (queue)->SetTh (alpha, beta);
+  return true;
+}
 
-  Config::SetDefault ("ns3::RedQueueDisc::MaxTh", DoubleValue (20));
-  RngSeedManager::SetSeed (this->test);
-  this->test += 1;
-
-  StaticCast<RedQueueDisc> (queue)->SetTh (1, 5);
-  NS_LOG_UNCOND ("MyExecuteActions: " << action);
-  NS_LOG_UNCOND ("---" << box);
-  NS_LOG_UNCOND ("---" << discrete);
+/*
+Set minTh, maxTh, bottleNeckLinkBw. bottleNeckLinkDelay
+*/
+bool
+MyGymEnv::SetInfo(int minTh, int maxTh, int maxSizeValue, float bottleNeckLinkBw, float bottleNeckLinkDelay){
+  this->minTh = minTh;
+  this->maxTh = maxTh;
+  this->bottleNeckLinkBw = bottleNeckLinkBw;
+  this->bottleNeckLinkDelay = bottleNeckLinkDelay;
+  this->queueMaxSize = maxSizeValue;
   return true;
 }
 
 void
 MyGymEnv::PerformCca (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
 {
-  enqueue += 1;
-  if(enqueue % 20 == 0)
-    NS_LOG_UNCOND ("Enqueue: OCCUR " << enqueue);
+  NS_LOG_UNCOND ("PerformCca: ");
 }
 
 void
-MyGymEnv::PerformTest(){
-  NS_LOG_UNCOND ("teset!!!!");
+MyGymEnv::Enqueue (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
+{
+  avgPacketDelay += queue_size;
+  totalPacketDelay += queue_size;
+  packetNum += 1;
+  totalPacketNum += 1;
+  queue_size += 1;
+  m_count += 1;
+  //NS_LOG_UNCOND ("Enqueue: " << queue_size);
+}
+
+void
+MyGymEnv::Dequeue (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
+{
+  queue_size -= 1;
+  dequeuePackets += 1;
+  //NS_LOG_UNCOND ("Dequeue" << queue_size);
+}
+
+void
+MyGymEnv::Drop (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
+{
+  m_count = 0;
+  dropPackets += 1;
+  NS_LOG_UNCOND ("!!!!!!!!!!!!!!!!!!!!!!!!!DROP" << queue_size << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 }
 
 } // ns3 namespace

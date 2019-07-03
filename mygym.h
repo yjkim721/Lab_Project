@@ -58,16 +58,34 @@ public:
   float GetReward();
   std::string GetExtraInfo();
   bool ExecuteActions(Ptr<OpenGymDataContainer> action);
+  int minTh, maxTh;
+  int bottleNeckLinkBw, bottleNeckLinkDelay, queueMaxSize;
+  bool SetInfo(int minTh, int maxTh, int maxSizeValue, float bottleNeckLinkBw, float bottleNeckLinkDelay);
 
-  int test = 2;
-  static int enqueue;
+  static int queue_size;
+  static int m_count;
+  static double avgPacketDelay;
+  static double lastPacketDelay;
+  static double totalPacketDelay;
+  static double dropRate;
+  static int dropPackets;
+  static int dequeuePackets;
+  static int totalPacketNum;
+  static int packetNum;
+  static int receivedPackets;
   Ptr<QueueDisc> queue;
   // the function has to be static to work with MakeBoundCallback
   // that is why we pass pointer to MyGymEnv instance to be able to store the context (node, etc)
   static void PerformCca(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
-  void PerformTest();
+  static void Enqueue(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
+  static void Dequeue(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
+  static void Drop(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
 
 private:
+  uint32_t nodeNum = 7;
+  uint32_t actionNum = 2;
+  float low = 0.0;
+  float high = 1000.0;
   void ScheduleNextStateRead();
   Time m_interval;
 };
