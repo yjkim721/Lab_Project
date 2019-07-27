@@ -35,7 +35,7 @@ def signal_handler(sig, frame):
     sub1 = 'qSize'
     arr1 = delay_history
     sub2 = 'Outcoming Packets'
-    arr2 = throughput_history
+    arr2 = util_history
     sub3 = 'Reward'
     arr3 = rew_history
     x = 'Episode'
@@ -80,19 +80,15 @@ parser.add_argument('--start',
                     help='Start ns-3 simulation script 0/1, Default: 1')
 args = parser.parse_args()
 startSim = bool(args.start)
+print("make env")
 env = ns3env.Ns3Env(port=setting.port, stepTime=setting.stepTime, startSim=startSim,
                     simSeed=setting.seed, simArgs=setting.simArgs, debug=setting.debug)
-
+print("done env");
 env._max_episode_steps = setting.MAX_STEPS
 
 delay_history = []
 rew_history = []
-episodes_history = []
-packet_delay_history = []
-drop_rate_history = []
-throughput_history = []
-q_size_history = []
-received_history = []
+util_history = []
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -109,11 +105,10 @@ sess.run(tf.initialize_all_variables())
 for i in range(setting.NUM_EPISODES):
     cur_state = env.reset()
     cum_reward = 0
-    cum_delay = 0
-    cum_deque = 0
     if (i % setting.EVALUATE_EVERY) == 0:
       print ('====evaluation====')
     for t in range(setting.MAX_STEPS):
+      print("Time step: " + str(t))
       if (i % setting.EVALUATE_EVERY) == 0:
         env.render()
         action = agent.get_action(cur_state, sess)[0]
@@ -123,38 +118,21 @@ for i in range(setting.NUM_EPISODES):
       action = convertToPositive(action)
       next_state, reward, done, info = env.step(action)
       infos = info.split(',')
-      totalPacketDelay = float(infos[0])
-      avgPacketDelay = float(infos[1])
-      dropRate = float(infos[2])
-      dequeuePackets = float(infos[3])
-      receivedPacket = float(infos[4])
-      q_size_history.append(avgPacketDelay)
-      received_history.append(receivedPacket)
+      rew_history.append(reward)
+      util_history.append(float(infos[2]))
+      delay_history.append(float(infos[3]))
+      cum_reward += reward
+      agent.add_step(Step(cur_step=cur_state, action=action, next_step=next_state, reward=reward, done=done))
       if (i % setting.EVALUATE_EVERY) == 0:
           printer.print_state(cur_state)
           printer.do_job('action', action)
-          printer.do_job('reward, avgPacketDelay, dropRate', [reward, avgPacketDelay, dropRate])
+          printer.do_job('reward, util, delay', [reward, float(infos[2]), float(infos[3])])
           printer.do_line()
-      if done:
-        cum_reward += reward
-        cum_delay = totalPacketDelay
-        cum_deque = dequeuePackets
-        agent.add_step(Step(cur_step=cur_state, action=action, next_step=next_state, reward=reward, done=done))
-        print("Done! Episode {} finished after {} timesteps, cum_reward: {}, total_avg_delay: {}"
-        .format(i, t + 1, cum_reward, totalPacketDelay))
+      if done or t == setting.MAX_STEPS - 1:
+        print("Done! Episode {} finished after {} timesteps, cum_reward: {}".format(i, t + 1, cum_reward))
         break
-      cum_reward += reward
-      agent.add_step(Step(cur_step=cur_state, action=action, next_step=next_state, reward=reward, done=done))
       cur_state = next_state
-      if t == setting.MAX_STEPS - 1:
-        cum_delay = totalPacketDelay
-        cum_deque = dequeuePackets
-        print ("Done!! Episode {} finished after {} timesteps, cum_reward: {}, total_avg_delay: {}".format(i, t + 1, cum_reward, totalPacketDelay))
     agent.learn_batch(sess)
-    delay_history.append(float(cum_delay))
-    rew_history.append(cum_reward)
-    throughput_history.append(cum_deque)
 
-printer.plotLearningPerformance('', 'Q size', q_size_history, 'Received Packets', received_history, 'time');
-#printer.plotLearningPerformance2('Learning Performance: ', 'qSize',
-#            delay_history, 'Outcoming Packets', throughput_history, 'Reward', rew_history, 'Episode');
+printer.plotLearningPerformance2('Simulation', 'Reward',
+            rew_history, 'Queuing delay', delay_history, 'Link Utilization', util_history, 'time(0.1s)');

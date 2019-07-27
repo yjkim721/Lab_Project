@@ -1,6 +1,6 @@
 # ns3-env Args
 port = 5555
-simTime = 50 # seconds
+simTime = 100 # seconds
 stepTime = 0.1  # seconds
 seed = 0
 simArgs = {"--simTime": simTime,
@@ -19,7 +19,7 @@ N_H1 = 400
 N_H2 = 300
 
 STATE_SIZE = 7
-ACTION_SIZE = 2
+ACTION_SIZE = 1
 BATCH_SIZE = 10
 MAX_STEPS = int(simTime / stepTime)
 FAIL_PENALTY = 0

@@ -39,21 +39,24 @@
 
 namespace ns3 {
 
+double MyGymEnv::dataFromBulk = 0;
+double MyGymEnv::dataFromPPBP = 0;
+double MyGymEnv::totalDataFromBulk = 0;
+double MyGymEnv::totalDataFromPPBP = 0;
+int MyGymEnv::queue_size = 0;
+int MyGymEnv::m_count = 0;
+
+long MyGymEnv::total_packet_size = 0;
+int MyGymEnv::packet_count = 0;
+long MyGymEnv::dequeue_packets = 0;
+vector<int> MyGymEnv::packetDelay;
+
+double MyGymEnv::last_link_utilization = -1;
+double MyGymEnv::last_median_packet_delay = -1;
+
 NS_LOG_COMPONENT_DEFINE ("MyGymEnv");
 
 NS_OBJECT_ENSURE_REGISTERED (MyGymEnv);
-
-int MyGymEnv::queue_size = 0;
-int MyGymEnv::m_count = 0;
-double MyGymEnv::avgPacketDelay = 0;
-double MyGymEnv::lastPacketDelay = 9999;
-double MyGymEnv::totalPacketDelay = 0;
-double MyGymEnv::dropRate = 0;
-int MyGymEnv::dropPackets = 0;
-int MyGymEnv::dequeuePackets = 0;
-int MyGymEnv::receivedPackets = 0;
-int MyGymEnv::packetNum = 0;
-int MyGymEnv::totalPacketNum = 0;
 
 MyGymEnv::MyGymEnv ()
 {
@@ -161,7 +164,6 @@ MyGymEnv::GetObservation()
   box->AddValue(maxTh);
   box->AddValue(bottleNeckLinkBw);
   box->AddValue(bottleNeckLinkDelay);
-
   NS_LOG_UNCOND ("MyGetObservation: " << box);
   return box;
 }
@@ -172,28 +174,50 @@ Define reward function
 float
 MyGymEnv::GetReward()
 {
-  static float reward = 0.0;
-  avgPacketDelay = std::isnan(avgPacketDelay / packetNum) ? 0 : avgPacketDelay / packetNum;
-  dropRate = std::isnan((double)dropPackets/(packetNum + dropPackets)) ? 0 : (double)dropPackets/(packetNum + dropPackets);
-  receivedPackets = packetNum + dropPackets;
-  if(this-> minTh > this->maxTh){
-    reward = -2;
-  }else{
-      if (this->minTh < avgPacketDelay && avgPacketDelay < this->maxTh) {
-        reward = std::max(avgPacketDelay-lastPacketDelay, 0.0);
-      }
-      else if (avgPacketDelay >= this->maxTh){
-        reward = -1;
-      }
-      else {
-        reward = 0;
-      }
+  //static float reward = 1;
+  int reward = 0;
+  NS_LOG_UNCOND("reward" << reward);
+  if (packet_count > 0) {
+    int idx = packetDelay.size() / 2;
+    NS_LOG_UNCOND("idx" << idx);
+    int meanPktSize = total_packet_size / packet_count;
+    NS_LOG_UNCOND("meanPktSize" << meanPktSize);
+    double bandwidth = bottleNeckLinkBw * 1000000;
+    NS_LOG_UNCOND("bandwidth" << bandwidth);
+    double median_pkt_delay = packetDelay[idx] * 8 * meanPktSize / bandwidth;
+    NS_LOG_UNCOND("median_pkt_delay" << median_pkt_delay);
+    double outcoming_rate = dequeue_packets * 8 / 0.1;
+    NS_LOG_UNCOND("outcoming_rate" << outcoming_rate);
+    double link_utilization = outcoming_rate / bandwidth;
+    NS_LOG_UNCOND("link_utilization" << link_utilization);
+
+    if (last_link_utilization < 0 || last_median_packet_delay < 0) {
+      reward = 0;
+    }
+    else if (link_utilization - last_link_utilization > 0.001 && last_median_packet_delay - median_pkt_delay > 0.001) {
+      reward = 2;
+    }
+    else if (link_utilization - last_link_utilization > 0.001 || last_median_packet_delay - median_pkt_delay > 0.001){
+      reward = 1;
+    }
+    else if (link_utilization - last_link_utilization < -0.001 && last_median_packet_delay - median_pkt_delay < -0.001){
+      reward = -2;
+    }
+    else if (link_utilization - last_link_utilization < -0.001 || last_median_packet_delay - median_pkt_delay < -0.001){
+      reward = -1;
+    }
+    else{
+      reward = 0;
+    }
+    last_link_utilization = link_utilization;
+    last_median_packet_delay = median_pkt_delay;
+    NS_LOG_UNCOND ("MyGetReward: " << reward << "," << link_utilization << "," << median_pkt_delay);
   }
-  lastPacketDelay = avgPacketDelay;
-  avgPacketDelay = 0;
-  packetNum = 0;
-  dropPackets = 0;
-  NS_LOG_UNCOND ("MyGetReward: " << reward);
+
+  packet_count = 0;
+  packetDelay.clear();
+  total_packet_size = 0;
+  dequeue_packets = 0;
   return reward;
 }
 
@@ -203,12 +227,13 @@ Define extra info. Optional
 std::string
 MyGymEnv::GetExtraInfo()
 {
-  std::string myInfo = std::to_string(totalPacketDelay/totalPacketNum);
-  myInfo += "," + std::to_string(lastPacketDelay);
-  myInfo += "," + std::to_string(dropRate);
-  myInfo += "," + std::to_string(dequeuePackets);
-  myInfo += "," + std::to_string(receivedPackets);
-  NS_LOG_UNCOND("MyGetExtraInfo(totalPacketDelay): " << myInfo);
+  std::string myInfo = std::to_string(dataFromPPBP*8/1000000) + ",";
+  myInfo += std::to_string(dataFromBulk*8/1000000) + ",";
+  myInfo += std::to_string(last_link_utilization) + ",";
+  myInfo += std::to_string(last_median_packet_delay);
+  //dataFromBulk = 0;
+  //dataFromPPBP = 0;
+  NS_LOG_UNCOND("MyGetExtraInfo: " << myInfo << "/" << Simulator::Now().GetSeconds());
   return myInfo;
 }
 
@@ -220,14 +245,13 @@ MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 {
   Ptr<OpenGymBoxContainer<float> > box = DynamicCast<OpenGymBoxContainer<float> >(action);
   float alpha = box -> GetValue(0);
-  float beta = box -> GetValue(1);
-  int new_minTh = queueMaxSize * alpha;
-  int new_maxTh = queueMaxSize * beta;
-  this->minTh = new_minTh;
-  this->maxTh = new_maxTh;
-  NS_LOG_UNCOND("myGymEnv(ExecuteActions): " << new_minTh << "," << new_maxTh);
-  //Config::SetDefault ("ns3::RedQueueDisc::MinTh", DoubleValue (new_minTh));
-  //Config::SetDefault ("ns3::RedQueueDisc::MaxTh", DoubleValue (new_maxTh));
+  this->maxTh = alpha;
+  int new_maxTh = queueMaxSize * alpha;
+  Config::SetDefault ("ns3::RedQueueDisc::MaxTh", DoubleValue (new_maxTh));
+  NS_LOG_UNCOND("myGymEnv(ExecuteActions): " << new_maxTh);
+  //float beta = box -> GetValue(1);
+  //int new_minTh = queueMaxSize * alpha;
+  //this->minTh = new_minTh;
   //StaticCast<RedQueueDisc> (queue)->SetTh (alpha, beta);
   return true;
 }
@@ -236,12 +260,12 @@ MyGymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 Set minTh, maxTh, bottleNeckLinkBw. bottleNeckLinkDelay
 */
 bool
-MyGymEnv::SetInfo(int minTh, int maxTh, int maxSizeValue, float bottleNeckLinkBw, float bottleNeckLinkDelay){
+MyGymEnv::SetInfo(float minTh, float maxTh, float bottleNeckLinkBw, float bottleNeckLinkDelay, float queueMaxSize){
   this->minTh = minTh;
   this->maxTh = maxTh;
   this->bottleNeckLinkBw = bottleNeckLinkBw;
   this->bottleNeckLinkDelay = bottleNeckLinkDelay;
-  this->queueMaxSize = maxSizeValue;
+  this->queueMaxSize = queueMaxSize;
   return true;
 }
 
@@ -254,11 +278,10 @@ MyGymEnv::PerformCca (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDis
 void
 MyGymEnv::Enqueue (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
 {
-  avgPacketDelay += queue_size;
-  totalPacketDelay += queue_size;
-  packetNum += 1;
-  totalPacketNum += 1;
   queue_size += 1;
+  packetDelay.push_back(queue_size);
+  total_packet_size += item -> GetPacket() -> GetSize();
+  packet_count += 1;
   m_count += 1;
   //NS_LOG_UNCOND ("Enqueue: " << queue_size);
 }
@@ -267,7 +290,7 @@ void
 MyGymEnv::Dequeue (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
 {
   queue_size -= 1;
-  dequeuePackets += 1;
+  dequeue_packets += item -> GetPacket() -> GetSize();
   //NS_LOG_UNCOND ("Dequeue" << queue_size);
 }
 
@@ -275,8 +298,18 @@ void
 MyGymEnv::Drop (Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item)
 {
   m_count = 0;
-  dropPackets += 1;
-  NS_LOG_UNCOND ("!!!!!!!!!!!!!!!!!!!!!!!!!DROP" << queue_size << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+}
+
+void
+MyGymEnv::ReceivedFromBulkSender(Ptr<const Packet> p){
+  dataFromBulk += p->GetSize();
+  totalDataFromBulk += p->GetSize();
+}
+
+void
+MyGymEnv::ReceivedFromPPBPSender(Ptr<const Packet> p){
+  dataFromPPBP += p->GetSize();
+  totalDataFromPPBP += p->GetSize();
 }
 
 } // ns3 namespace

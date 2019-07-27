@@ -39,6 +39,8 @@
 #include <iostream>
 #include <iomanip>
 #include <map>
+#include <fstream>
+#include <vector>
 
 namespace ns3 {
 
@@ -58,32 +60,39 @@ public:
   float GetReward();
   std::string GetExtraInfo();
   bool ExecuteActions(Ptr<OpenGymDataContainer> action);
-  int minTh, maxTh;
-  int bottleNeckLinkBw, bottleNeckLinkDelay, queueMaxSize;
-  bool SetInfo(int minTh, int maxTh, int maxSizeValue, float bottleNeckLinkBw, float bottleNeckLinkDelay);
+  float minTh, maxTh;
+  float bottleNeckLinkBw, bottleNeckLinkDelay, queueMaxSize;
+  int onoffPackets, bulkPackets;
+  bool SetInfo(float minTh, float maxTh, float bottleNeckLinkBw, float bottleNeckLinkDelay, float queueMaxSize);
 
+  Ptr<QueueDisc> queue;
   static int queue_size;
   static int m_count;
-  static double avgPacketDelay;
-  static double lastPacketDelay;
-  static double totalPacketDelay;
-  static double dropRate;
-  static int dropPackets;
-  static int dequeuePackets;
-  static int totalPacketNum;
-  static int packetNum;
-  static int receivedPackets;
-  Ptr<QueueDisc> queue;
+  static double dataFromPPBP;
+  static double dataFromBulk;
+  static double totalDataFromPPBP;
+  static double totalDataFromBulk;
+
+  static long total_packet_size;
+  static int packet_count;
+  static long dequeue_packets;
+  static vector<int> packetDelay;
+
+  static double last_median_packet_delay;
+  static double last_link_utilization;
+
   // the function has to be static to work with MakeBoundCallback
   // that is why we pass pointer to MyGymEnv instance to be able to store the context (node, etc)
   static void PerformCca(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
   static void Enqueue(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
   static void Dequeue(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
   static void Drop(Ptr<MyGymEnv> entity, double duration, Ptr< const QueueDiscItem > item);
+  static void ReceivedFromBulkSender(Ptr<const Packet> p);
+  static void ReceivedFromPPBPSender(Ptr<const Packet> p);
 
 private:
   uint32_t nodeNum = 7;
-  uint32_t actionNum = 2;
+  uint32_t actionNum = 1;
   float low = 0.0;
   float high = 1000.0;
   void ScheduleNextStateRead();
